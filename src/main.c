@@ -23,6 +23,12 @@ struct bcm2835_i2cbb ibb;
 struct termios options;
 int serial = -1, pfile = -1;
 int count = 1;
+struct txdata {
+	char str[80];
+	int len;
+} gpsdata;
+
+
 
 uint16_t gps_CRC16_checksum(char *string) {
 	int i, j;
@@ -44,11 +50,6 @@ uint16_t gps_CRC16_checksum(char *string) {
 	}
 
 	return crc;
-}
-
-void *txgpsdom(void *txs) {
-	domex_txstring(txs);
-	return NULL;
 }
 
 void tx_gps(void) {
@@ -99,7 +100,8 @@ void tx_gps(void) {
 			count, hour, minute, second, lat_int, lat_dec, lon_int, lon_dec,
 			alt, sats, volt, tin / 10, tin < 0 ? -tin % 10 : tin%10, tout / 10, tout < 0 ? -tout % 10 : tout % 10);
 	sprintf(txstring, "%s,%i", txstring, errorstatus);
-	sprintf(txstring, "%s*%04X\n", txstring, gps_CRC16_checksum(txstring));
+	sprintf(gpsdata.str, "%s*%04X\n", txstring, gps_CRC16_checksum(txstring));
+	gpsdata.len = strlen(gpsdata.str);
 	printf("%s", txstring);
 	write(serial, txstring, strlen(txstring));
 	tcdrain(serial);
