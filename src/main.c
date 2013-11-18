@@ -18,17 +18,39 @@
 #include "adc.h"
 #include "domino.h"
 #include <pthread.h>
+#include "gpio.h"
 
 struct bcm2835_i2cbb ibb;
 struct termios options;
 int serial = -1, pfile = -1;
 int count = 1;
+int dstatus = 0;
 struct txdata {
 	char str[80];
 	int len;
 } gpsdata;
 
+void *domex_tx(void) {
+	int i;
+	GPIO_SET = 1 << 23;	// Enable NTX2b
+	for(i = 0; i <=5; i++) {
+	domex_txchar(13);
+	}
+	for(i = 0; i <= gpsdata.len; i++) {
+		domex_txchar((uint16_t) gpsdata.str[i]);
+	}
+	domex_txchar(13);
+	GPIO_CLR = 1 << 23;	// Disable NTX2b
+	dstatus = 3;
+	return 0;
+}
 
+void *rtty_tx(void) {
+	write(serial, gpsdata.str, gpsdata.len);
+		tcdrain(serial);
+		dstatus = 2;
+		return 0;
+}
 
 uint16_t gps_CRC16_checksum(char *string) {
 	int i, j;
@@ -52,7 +74,7 @@ uint16_t gps_CRC16_checksum(char *string) {
 	return crc;
 }
 
-void tx_gps(void) {
+void *get_gps(void) {
 	uint8_t lock = 0, sats = 0;								// lock status and # of sats in view
 	uint8_t hour = 0, minute = 0, second = 0;				// time
 	int lat_int = 0, lon_int = 0;							// position
@@ -103,13 +125,16 @@ void tx_gps(void) {
 	sprintf(gpsdata.str, "%s*%04X\n", txstring, gps_CRC16_checksum(txstring));
 	gpsdata.len = strlen(gpsdata.str);
 	printf("%s", txstring);
-	write(serial, txstring, strlen(txstring));
-	tcdrain(serial);
-	//pthread_create(&dom, NULL, txgpsdom, &txstring);
-	domex_txstring("\n\n");
-	domex_txstring(txstring);
-	domex_txstring("\n");
+	//write(serial, txstring, strlen(txstring));
+	//tcdrain(serial);
+	//pthread_create(&dom, NULL, domex_tx, NULL);
+	//domex_txstring("\n\n");
+	//domex_txstring(txstring);
+	//domex_txstring("\n");
+	//domex_tx();
+	dstatus = 1;
 	count++;
+	return 0;
 }
 
 uint16_t tx_image(uint16_t img_id) {
@@ -117,6 +142,7 @@ uint16_t tx_image(uint16_t img_id) {
 	ssdv_t ssdv;
 	uint8_t pkt[SSDV_PKT_SIZE], b[128];
 	size_t r;
+	pthread_t dom, rtty, ggps;
 
 	pfile = open("/home/pi/test512.jpg", O_RDONLY | O_NOCTTY | O_NDELAY);
 
@@ -149,7 +175,23 @@ uint16_t tx_image(uint16_t img_id) {
 		write(serial, pkt, SSDV_PKT_SIZE);
 		tcdrain(serial);
 		i++;
-		if ((i % 3) ==0) tx_gps();
+		//if ((i % 3) ==0) tx_gps();
+		switch (dstatus) {
+		case 0:
+			pthread_create(&ggps, NULL, get_gps, NULL);
+			break;
+		case 1:
+			pthread_create(&dom, NULL, domex_tx, NULL);
+			pthread_create(&rtty, NULL, rtty_tx, NULL);
+			while (dstatus != 2);
+			break;
+		case 2:
+			break;
+		case 3:
+			dstatus = 0;
+			break;
+		}
+
 
 	}
 	printf("Wrote %i packets\n", i);
