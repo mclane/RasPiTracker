@@ -183,7 +183,7 @@ void domex_tone_bb(int tone) {
 }
 void domex_tone(int tone) {
 	// Total length of this function should be 1/15.625s
-	printf("DomEX: Sending tone %d\n", tone);
+	//printf("DomEX: Sending tone %d\n", tone);
 	//domex_tone_bb(tone);	// Used for Bit Bang Method
 
 	// 32 bits = 2 milliseconds, init with 1 millisecond

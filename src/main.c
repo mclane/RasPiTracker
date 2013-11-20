@@ -33,23 +33,24 @@ struct txdata {
 void *domex_tx(void) {
 	int i;
 	GPIO_SET = 1 << 23;	// Enable NTX2b
-	for(i = 0; i <=5; i++) {
-	domex_txchar(13);
+	for (i = 0; i <= 5; i++) {
+		domex_txchar(13);
 	}
-	for(i = 0; i <= gpsdata.len; i++) {
+	for (i = 0; i <= gpsdata.len; i++) {
 		domex_txchar((uint16_t) gpsdata.str[i]);
 	}
 	domex_txchar(13);
 	GPIO_CLR = 1 << 23;	// Disable NTX2b
-	dstatus = 3;
-	return 0;
+	printf("DomEX finished\n");
+	dstatus = 5;
+	return NULL;
 }
 
 void *rtty_tx(void) {
 	write(serial, gpsdata.str, gpsdata.len);
-		tcdrain(serial);
-		dstatus = 2;
-		return 0;
+	tcdrain(serial);
+	dstatus = 4;
+	return NULL;
 }
 
 uint16_t gps_CRC16_checksum(char *string) {
@@ -75,7 +76,7 @@ uint16_t gps_CRC16_checksum(char *string) {
 }
 
 void *get_gps(void) {
-	uint8_t lock = 0, sats = 0;								// lock status and # of sats in view
+	uint8_t lock = 0, sats = 0;				// lock status and # of sats in view
 	uint8_t hour = 0, minute = 0, second = 0;				// time
 	int lat_int = 0, lon_int = 0;							// position
 	int32_t alt = 0;										// altitude
@@ -116,15 +117,17 @@ void *get_gps(void) {
 	tin = get_T(0);
 	tout = get_T(1);
 	volt = adc_getV(0);
-	volt = 3300 * volt/489;
+	volt = 3300 * volt / 489;
 
-	sprintf(txstring, "$$$$$PYSY,%i,%02d:%02d:%02d,%i.%05d,%i.%05d,%d,%d,%i,%i.%i,%i.%i",
+	sprintf(txstring,
+			"$$$$$PYSY,%i,%02d:%02d:%02d,%i.%05d,%i.%05d,%d,%d,%i,%i.%i,%i.%i",
 			count, hour, minute, second, lat_int, lat_dec, lon_int, lon_dec,
-			alt, sats, volt, tin / 10, tin < 0 ? -tin % 10 : tin%10, tout / 10, tout < 0 ? -tout % 10 : tout % 10);
+			alt, sats, volt, tin / 10, tin < 0 ? -tin % 10 : tin % 10,
+			tout / 10, tout < 0 ? -tout % 10 : tout % 10);
 	sprintf(txstring, "%s,%i", txstring, errorstatus);
 	sprintf(gpsdata.str, "%s*%04X\n", txstring, gps_CRC16_checksum(txstring));
 	gpsdata.len = strlen(gpsdata.str);
-	printf("%s", txstring);
+	printf("%s", gpsdata.str);
 	//write(serial, txstring, strlen(txstring));
 	//tcdrain(serial);
 	//pthread_create(&dom, NULL, domex_tx, NULL);
@@ -132,9 +135,9 @@ void *get_gps(void) {
 	//domex_txstring(txstring);
 	//domex_txstring("\n");
 	//domex_tx();
-	dstatus = 1;
+	dstatus = 2;
 	count++;
-	return 0;
+	return NULL;
 }
 
 uint16_t tx_image(uint16_t img_id) {
@@ -143,8 +146,11 @@ uint16_t tx_image(uint16_t img_id) {
 	uint8_t pkt[SSDV_PKT_SIZE], b[128];
 	size_t r;
 	pthread_t dom, rtty, ggps;
+	pthread_attr_t attr;
 
 	pfile = open("/home/pi/test512.jpg", O_RDONLY | O_NOCTTY | O_NDELAY);
+	pthread_attr_init(&attr);
+	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 
 	ssdv_enc_init(&ssdv, "PYSY", img_id);
 	ssdv_enc_set_buffer(&ssdv, pkt);
@@ -152,46 +158,53 @@ uint16_t tx_image(uint16_t img_id) {
 	i = 0;
 
 	while (1) {
-		while ((c = ssdv_enc_get_packet(&ssdv)) == SSDV_FEED_ME) {
-			r = read(pfile, &b, 128);
-			if (r <= 0) {
-				printf("Premature end of file\n");
-				break;
+		if (dstatus != 3) {
+			while ((c = ssdv_enc_get_packet(&ssdv)) == SSDV_FEED_ME) {
+				r = read(pfile, &b, 128);
+				if (r <= 0) {
+					printf("Premature end of file\n");
+					break;
+				}
+
+				ssdv_enc_feed(&ssdv, b, r);
 			}
 
-			ssdv_enc_feed(&ssdv, b, r);
-		}
+			if (c == SSDV_EOI) {
+				printf("ssdv_enc_get_packet said EOI\n");
+				break;
+			} else if (c != SSDV_OK) {
+				printf("ssdv_enc_get_packet failed: %i\n", c);
+				close(pfile);
+				return (0);
+			}
 
-		if (c == SSDV_EOI) {
-			printf("ssdv_enc_get_packet said EOI\n");
-			break;
+			write(serial, pkt, SSDV_PKT_SIZE);
+			tcdrain(serial);
+			i++;
 		}
-		else if (c != SSDV_OK) {
-			printf("ssdv_enc_get_packet failed: %i\n", c);
-			close(pfile);
-			return (0);
-		}
-
-		write(serial, pkt, SSDV_PKT_SIZE);
-		tcdrain(serial);
-		i++;
 		//if ((i % 3) ==0) tx_gps();
 		switch (dstatus) {
 		case 0:
-			pthread_create(&ggps, NULL, get_gps, NULL);
+			dstatus = 1;
+			pthread_create(&ggps, &attr, get_gps, NULL);
 			break;
 		case 1:
-			pthread_create(&dom, NULL, domex_tx, NULL);
-			pthread_create(&rtty, NULL, rtty_tx, NULL);
-			while (dstatus != 2);
 			break;
 		case 2:
+			dstatus = 3;
+			printf("Start Transmission\n");
+			pthread_create(&dom, &attr, domex_tx, NULL);
+			pthread_create(&rtty, &attr, rtty_tx, NULL);
 			break;
 		case 3:
+			break;
+		case 4:
+			break;
+		case 5:
 			dstatus = 0;
 			break;
 		}
-
+		printf("DSTATUS = %i\n", dstatus);
 
 	}
 	printf("Wrote %i packets\n", i);
