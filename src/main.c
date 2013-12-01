@@ -19,12 +19,13 @@
 #include "domino.h"
 #include <pthread.h>
 #include "gpio.h"
+#include <sys/wait.h>
 
 struct bcm2835_i2cbb ibb;
 struct termios options;
-int serial = -1, pfile = -1;
+int serial = -1;
 int count = 1;
-int dstatus = 0;
+int dstatus = 0, istatus = 0;
 struct txdata {
 	char str[80];
 	int len;
@@ -147,8 +148,18 @@ uint16_t tx_image(uint16_t img_id) {
 	size_t r;
 	pthread_t dom, rtty, ggps;
 	pthread_attr_t attr;
+	FILE *pfile;
 
-	pfile = open("/home/pi/test512.jpg", O_RDONLY | O_NOCTTY | O_NDELAY);
+	char pfname[] = "/home/pi/pics/im0000.jpg";
+	sprintf(pfname, "/home/pi/pics/im%04i.jpg", img_id);
+
+
+	pfile = fopen(pfname, "rb");
+
+	if(NULL == pfile) {
+		printf("could not open %s\n", pfname);
+	}
+
 	pthread_attr_init(&attr);
 	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 
@@ -160,7 +171,7 @@ uint16_t tx_image(uint16_t img_id) {
 	while (1) {
 		if (dstatus != 3) {
 			while ((c = ssdv_enc_get_packet(&ssdv)) == SSDV_FEED_ME) {
-				r = read(pfile, &b, 128);
+				r = fread(b, 1, 128, pfile);
 				if (r <= 0) {
 					printf("Premature end of file\n");
 					break;
@@ -174,7 +185,7 @@ uint16_t tx_image(uint16_t img_id) {
 				break;
 			} else if (c != SSDV_OK) {
 				printf("ssdv_enc_get_packet failed: %i\n", c);
-				close(pfile);
+				fclose(pfile);
 				return (0);
 			}
 
@@ -208,11 +219,14 @@ uint16_t tx_image(uint16_t img_id) {
 
 	}
 	printf("Wrote %i packets\n", i);
-	close(pfile);
+	fclose(pfile);
 	return (i);
 }
 
 int main() {
+
+	int pid;
+	char pfname[] = "/home/pi/pics/im0000.jpg";
 
 	int img_id = 1;
 
@@ -225,7 +239,7 @@ int main() {
 
 	serial = open("/dev/ttyAMA0", O_RDWR | O_NOCTTY | O_NDELAY);
 	tcgetattr(serial, &options);
-	options.c_cflag = B600 | CS8 | CLOCAL | CSTOPB;		//<Set baud rate
+	options.c_cflag = B300 | CS8 | CLOCAL | CSTOPB;		//<Set baud rate
 	options.c_iflag = 0;
 	options.c_oflag = 0;
 	options.c_lflag = 0;
@@ -233,9 +247,22 @@ int main() {
 	tcsetattr(serial, TCSANOW, &options);
 
 	while (1) {
-		tx_image(img_id);
+		sprintf(pfname, "/home/pi/pics/im%04i.jpg", img_id);
+		printf("File: %s\n", pfname);
+		pid = fork();
+		printf("PID: %i\n", pid);
+		if (pid == 0) {
+
+			execlp("raspistill", "raspistill", "-w", "360", "-h", "240", "-o",
+					pfname, NULL);
+			perror("execlp()");
+		} else {
+			waitpid(pid, 0, 0);
+			tx_image(img_id);
 		//tx_gps();
 		img_id++;
+		}
+
 	}
 
 }
