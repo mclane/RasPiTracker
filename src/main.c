@@ -253,7 +253,7 @@ int main() {
 		printf("PID: %i\n", pid);
 		if (pid == 0) {
 
-			execlp("raspistill", "raspistill", "-w", "360", "-h", "240", "-o",
+			execlp("raspistill", "raspistill", "-w", "512", "-h", "288", "-q", "50", "-rot", "180", "-o",
 					pfname, NULL);
 			perror("execlp()");
 		} else {
