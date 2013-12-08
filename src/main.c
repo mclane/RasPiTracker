@@ -88,6 +88,7 @@ void *get_gps(void) {
 	int tin, tout;
 	uint16_t volt;
 	pthread_t dom;
+	FILE *dfile;
 
 	gpserr = 0;
 	//do {
@@ -126,16 +127,12 @@ void *get_gps(void) {
 			alt, sats, volt, tin / 10, tin < 0 ? -tin % 10 : tin % 10,
 			tout / 10, tout < 0 ? -tout % 10 : tout % 10);
 	sprintf(txstring, "%s,%i", txstring, errorstatus);
+	dfile = fopen("/home/pi/data.txt", "a");
+	fprintf(dfile, "%s\n", txstring);
+	fclose(dfile);
 	sprintf(gpsdata.str, "%s*%04X\n", txstring, gps_CRC16_checksum(txstring));
 	gpsdata.len = strlen(gpsdata.str);
 	printf("%s", gpsdata.str);
-	//write(serial, txstring, strlen(txstring));
-	//tcdrain(serial);
-	//pthread_create(&dom, NULL, domex_tx, NULL);
-	//domex_txstring("\n\n");
-	//domex_txstring(txstring);
-	//domex_txstring("\n");
-	//domex_tx();
 	dstatus = 2;
 	count++;
 	return NULL;
