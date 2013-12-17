@@ -8,6 +8,8 @@
 #ifndef BCM2835_I2CBB_H_
 #define BCM2835_I2CBB_H_
 
+#include <stdint.h>
+
 struct bcm2835_i2cbb {
 	uint8_t address; 		// 7 bit address
 	uint8_t sda; 			// pin used for sda coresponds to gpio

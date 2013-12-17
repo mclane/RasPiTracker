@@ -36,6 +36,7 @@
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/PiTracker/src/tempsens}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/PiTracker/src/adc}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/PiTracker/src/domino}&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/PiTracker/src/sensors}&quot;"/>
 								</option>
 								<inputType id="cdt.managedbuild.tool.gnu.c.compiler.input.858550920" superClass="cdt.managedbuild.tool.gnu.c.compiler.input"/>
 							</tool>

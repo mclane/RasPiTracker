@@ -12,14 +12,14 @@
 #include "bcm2835.h"
 #include <time.h>
 
-struct bcm2835_i2cbb ibb;
+
 
 uint8_t getUBX_ACK(uint8_t *MSG);
 
 void startI2Cgps(void) {
 
-	ibb.address = GPS_ADDR;
-	bcm2835_i2cbb_open(&ibb, GPS_ADDR, 2, 3, 300, 2000000);
+	gpsi2c.address = GPS_ADDR;
+	bcm2835_i2cbb_open(&gpsi2c, GPS_ADDR, 2, 3, 300, 2000000);
 
 }
 
@@ -32,9 +32,9 @@ uint16_t fromGPS(void) {
 	d = 0;
 	i = 0;
 	while (d == 0) {
-		bcm8235_i2cbb_putc(&ibb, 0xFD);
+		bcm8235_i2cbb_putc(&gpsi2c, 0xFD);
 		for (j = 0; j< 200000; j++);
-		bcm8235_i2cbb_gets(&ibb, dd, 2);
+		bcm8235_i2cbb_gets(&gpsi2c, dd, 2);
 		d = (dd[0] << 8) | dd[1];
 		i++;
 		if (i > 500) return 0;
@@ -54,23 +54,6 @@ void setupGPS() {
 	printf("DM6 on\n");
 	delay(500);
 }
-/*
-void setupGPS(void) {
-	uint8_t data1[] = "$PUBX,40,GLL,0,0,0,0*5C\r\n";
-	uint8_t data2[] = "$PUBX,40,GGA,0,0,0,0*5A\r\n";
-	uint8_t data3[] = "$PUBX,40,GSA,0,0,0,0*4E\r\n";
-	uint8_t data4[] = "$PUBX,40,RMC,0,0,0,0*47\r\n";
-	uint8_t data5[] = "$PUBX,40,GSV,0,0,0,0*59\r\n";
-	uint8_t data6[] = "$PUBX,40,VTG,0,0,0,0*5E\r\n";
-	uint32_t len = sizeof(data1);
-	bcm8235_i2cbb_puts(&ibb, data1, len);
-	bcm8235_i2cbb_puts(&ibb, data2, len);
-	bcm8235_i2cbb_puts(&ibb, data3, len);
-	bcm8235_i2cbb_puts(&ibb, data4, len);
-	bcm8235_i2cbb_puts(&ibb, data5, len);
-	bcm8235_i2cbb_puts(&ibb, data6, len);
-	setGPS_DynamicModel6();
-}*/
 
 uint8_t gps_check_nav(void) {
 
@@ -80,12 +63,12 @@ uint8_t gps_check_nav(void) {
 	uint8_t data[45];
 	uint16_t len;
 
-	bcm8235_i2cbb_puts(&ibb, request, 8);
+	bcm8235_i2cbb_puts(&gpsi2c, request, 8);
 	delay(50);
 	// Get the message back from the GPS
 	len = fromGPS();
 	//printf("nav mode returned %i bytes \n", len);
-	bcm8235_i2cbb_gets(&ibb, data, 44);
+	bcm8235_i2cbb_gets(&gpsi2c, data, 44);
 	getUBX_ACK(request);
 	// Return the navigation mode and let the caller analyse it
 	return (uint8_t) *(data + 8);
@@ -100,12 +83,12 @@ void gps_check_lock(uint8_t *lock, uint8_t *sats) {
 	uint8_t data[61];
 	uint16_t len;
 
-	bcm8235_i2cbb_puts(&ibb, request, 8);
+	bcm8235_i2cbb_puts(&gpsi2c, request, 8);
 	delay(50);
 	// Get the message back from the GPS
 	len = fromGPS();
 	//printf("checklock returned %i bytes\n", len);
-	bcm8235_i2cbb_gets(&ibb, data, 60);
+	bcm8235_i2cbb_gets(&gpsi2c, data, 60);
 
 	// Return the value if GPSfixOK is set in 'flags'
 	if (*(data + 17) & 0x01)
@@ -127,12 +110,12 @@ void gps_get_position(int *lon_int, int *lon_dec, int *lat_int, int *lat_dec,
 
 	// Request a NAV-POSLLH message from the GPS
 	uint8_t request[8] = { 0xB5, 0x62, 0x01, 0x02, 0x00, 0x00, 0x03, 0x0A };
-	bcm8235_i2cbb_puts(&ibb, request, 8);
+	bcm8235_i2cbb_puts(&gpsi2c, request, 8);
 	delay(50);
 	// Get the message back from the GPS
 	len = fromGPS();
 	//printf("get_pos returned %i bytes\n", len);
-	bcm8235_i2cbb_gets(&ibb, data, 36);
+	bcm8235_i2cbb_gets(&gpsi2c, data, 36);
 
 	// 4 bytes of longitude (1e-7)
 	lon = (int32_t) *(data + 10) | (int32_t) *(data + 11) << 8
@@ -162,11 +145,11 @@ void gps_get_time(uint8_t *hour, uint8_t *minute, uint8_t *second) {
 	uint8_t data[29];
 	uint16_t len;
 
-	bcm8235_i2cbb_puts(&ibb, request, 8);
+	bcm8235_i2cbb_puts(&gpsi2c, request, 8);
 	delay(50);
 	len = fromGPS();
 	//printf("get_time returned %i bytes\n", len);
-	bcm8235_i2cbb_gets(&ibb, data, 28);
+	bcm8235_i2cbb_gets(&gpsi2c, data, 28);
 
 	*hour = *(data + 22);
 	*minute = *(data + 23);
@@ -200,7 +183,7 @@ uint8_t getUBX_ACK(uint8_t *MSG) {
 
 	len = fromGPS();
 	//printf("ack returned %i bytes\n", len);
-	bcm8235_i2cbb_gets(&ibb, data, 10);
+	bcm8235_i2cbb_gets(&gpsi2c, data, 10);
 	if (len < 10) {
 		return 0;
 	}
@@ -222,7 +205,7 @@ void setGPS_NMEAoff(void) {
 	len = sizeof(setNMEAoff) / sizeof(uint8_t);
 	//printf("enter NMEAoff\n");
 	while (!gps_set_sucess) {
-		bcm8235_i2cbb_puts(&ibb, setNMEAoff, len);
+		bcm8235_i2cbb_puts(&gpsi2c, setNMEAoff, len);
 		delay(500);
 		gps_set_sucess = getUBX_ACK(setNMEAoff);
 	}
@@ -239,7 +222,7 @@ void setGPS_DynamicModel6(void) {
 			0x16, 0xDC };
 	len = sizeof(setdm6) / sizeof(uint8_t);
 	while (!gps_set_sucess) {
-		bcm8235_i2cbb_puts(&ibb, setdm6, len);
+		bcm8235_i2cbb_puts(&gpsi2c, setdm6, len);
 		delay(100);
 		gps_set_sucess = getUBX_ACK(setdm6);
 	}
@@ -256,7 +239,7 @@ void setGPS_DynamicModel3(void) {
 			0x13, 0x76 };
 	len = sizeof(setdm3) / sizeof(uint8_t);
 	while (!gps_set_sucess) {
-		bcm8235_i2cbb_puts(&ibb, setdm3, len);
+		bcm8235_i2cbb_puts(&gpsi2c, setdm3, len);
 		delay(100);
 		gps_set_sucess = getUBX_ACK(setdm3);
 	}
@@ -270,7 +253,7 @@ void setGPS_PowerSaveMode(void) {
 			0x92 }; // Setup for Power Save Mode (Default Cyclic 1s)
 	len = sizeof(setPSM) / sizeof(uint8_t);
 	while (!gps_set_sucess) {
-		bcm8235_i2cbb_puts(&ibb, setPSM, len);
+		bcm8235_i2cbb_puts(&gpsi2c, setPSM, len);
 		delay(100);
 		gps_set_sucess = getUBX_ACK(setPSM);
 	}
@@ -284,7 +267,7 @@ void setGPS_MaxPerformanceMode(void) {
 			0x91 }; // Setup for Max Power Mode
 	len = sizeof(setMax) / sizeof(uint8_t);
 	while (!gps_set_sucess) {
-		bcm8235_i2cbb_puts(&ibb, setMax, len);
+		bcm8235_i2cbb_puts(&gpsi2c, setMax, len);
 		delay(100);
 		gps_set_sucess = getUBX_ACK(setMax);
 	}
@@ -298,7 +281,7 @@ void resetGPS(void) {
 	printf("enter reset\n");
 	len = sizeof(set_reset) / sizeof(uint8_t);
 	while (!gps_set_sucess) {
-		bcm8235_i2cbb_puts(&ibb, set_reset, len);
+		bcm8235_i2cbb_puts(&gpsi2c, set_reset, len);
 		delay(500);
 		gps_set_sucess = getUBX_ACK(set_reset);
 		gps_set_sucess = 1;

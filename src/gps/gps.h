@@ -12,6 +12,7 @@
 
 #define GPS_ADDR 0x42
 
+struct bcm2835_i2cbb gpsi2c;
 void startI2Cgps(void);
 void setupGPS(void);
 uint8_t gps_check_nav(void);

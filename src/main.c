@@ -20,8 +20,9 @@
 #include <pthread.h>
 #include "gpio.h"
 #include <sys/wait.h>
+#include "adxl345.h"
 
-struct bcm2835_i2cbb ibb;
+//struct bcm2835_i2cbb ibb, adxl;
 struct termios options;
 int serial = -1;
 int count = 1;
@@ -122,9 +123,9 @@ void *get_gps(void) {
 	volt = 3300 * volt / 489;
 
 	sprintf(txstring,
-			"$$$$$PYSY,%i,%02d:%02d:%02d,%i.%05d,%i.%05d,%d,%d,%i,%i.%i,%i.%i",
+			"$$$$$PYSY,%i,%02d:%02d:%02d,%i.%05d,%i.%05d,%d,%d,%i.%02d,%i.%i,%i.%i",
 			count, hour, minute, second, lat_int, lat_dec, lon_int, lon_dec,
-			alt, sats, volt, tin / 10, tin < 0 ? -tin % 10 : tin % 10,
+			alt, sats, volt/1000, (volt%1000)/10, tin / 10, tin < 0 ? -tin % 10 : tin % 10,
 			tout / 10, tout < 0 ? -tout % 10 : tout % 10);
 	sprintf(txstring, "%s,%i", txstring, errorstatus);
 	dfile = fopen("/home/pi/data.txt", "a");
