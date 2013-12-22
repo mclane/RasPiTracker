@@ -26,7 +26,10 @@
 struct termios options;
 int serial = -1;
 int count = 1;
-int dstatus = 0, istatus = 0;
+int istatus = 0, actual_pic = 0, req_img = 0;
+int need_gps = 1;
+int gps_available = 0;
+int dom_f, rtty_f = 0;
 struct txdata {
 	char str[80];
 	int len;
@@ -44,15 +47,15 @@ void *domex_tx(void) {
 	domex_txchar(13);
 	GPIO_CLR = 1 << 23;	// Disable NTX2b
 	printf("DomEX finished\n");
-	dstatus = 5;
+	dom_f = 1;
 	return NULL;
 }
 
-void *rtty_tx(void) {
+void rtty_tx(void) {
 	write(serial, gpsdata.str, gpsdata.len);
 	tcdrain(serial);
-	dstatus = 4;
-	return NULL;
+	rtty_f = 1;
+	//return NULL;
 }
 
 uint16_t gps_CRC16_checksum(char *string) {
@@ -88,7 +91,6 @@ void *get_gps(void) {
 	uint8_t fm, gpserr;
 	int tin, tout;
 	uint16_t volt;
-	pthread_t dom;
 	FILE *dfile;
 
 	gpserr = 0;
@@ -117,16 +119,21 @@ void *get_gps(void) {
 	} else {
 		errorstatus |= (1 << 1);
 	}
+	do {
 	tin = get_T(0);
+	} while (tin == 999);
+	do {
 	tout = get_T(1);
+	} while (tout == 999);
 	volt = adc_getV(0);
 	volt = 3300 * volt / 489;
 
 	sprintf(txstring,
 			"$$$$$PYSY,%i,%02d:%02d:%02d,%i.%05d,%i.%05d,%d,%d,%i.%02d,%i.%i,%i.%i",
 			count, hour, minute, second, lat_int, lat_dec, lon_int, lon_dec,
-			alt, sats, volt/1000, (volt%1000)/10, tin / 10, tin < 0 ? -tin % 10 : tin % 10,
-			tout / 10, tout < 0 ? -tout % 10 : tout % 10);
+			alt, sats, volt / 1000, (volt % 1000) / 10, tin / 10,
+			tin < 0 ? -tin % 10 : tin % 10, tout / 10,
+			tout < 0 ? -tout % 10 : tout % 10);
 	sprintf(txstring, "%s,%i", txstring, errorstatus);
 	dfile = fopen("/home/pi/data.txt", "a");
 	fprintf(dfile, "%s\n", txstring);
@@ -134,8 +141,44 @@ void *get_gps(void) {
 	sprintf(gpsdata.str, "%s*%04X\n", txstring, gps_CRC16_checksum(txstring));
 	gpsdata.len = strlen(gpsdata.str);
 	printf("%s", gpsdata.str);
-	dstatus = 2;
+	gps_available = 1;
 	count++;
+
+	return NULL;
+}
+
+void *run_camera(void) {
+	char still[] =
+			"raspistill -w 512 -h 288 -q 50 -rot 180 -o /home/pi/pics/im0000.jpg";
+	char video[] =
+			"raspivid -w 1280 -h 720 -b 8000000 -rot 180 -t 120000 -n -o /home/pi/vids/vid0000.h264";
+	char hrstill[] = "raspistill -rot 180 -o /home/pi/pics/hrim0000.jpg";
+	int img_id = 1, vid_id = 1, hr_img = 1;
+
+	while (1) {
+		if (req_img == 1) {
+			sprintf(still,
+					"raspistill -w 512 -h 288 -q 50 -rot 180 -o /home/pi/pics/im%04i.jpg",
+					img_id);
+			printf("Image file: %s\n", still);
+			system(still);
+			actual_pic = img_id;
+			img_id++;
+			req_img = 0;
+		}
+		sprintf(hrstill, "raspistill -rot 180 -o /home/pi/pics/hrim%04i.jpg",
+				hr_img);
+		printf("HDImage file: %s\n", hrstill);
+		system(hrstill);
+		hr_img++;
+		sprintf(video,
+				"raspivid -w 1280 -h 720 -b 8000000 -rot 180 -t 120000 -n -o /home/pi/vids/vid%04i.h264",
+				vid_id);
+		printf("Video file: %s\n", video);
+		system(video);
+		vid_id++;
+	}
+
 	return NULL;
 }
 
@@ -149,12 +192,13 @@ uint16_t tx_image(uint16_t img_id) {
 	FILE *pfile;
 
 	char pfname[] = "/home/pi/pics/im0000.jpg";
-	sprintf(pfname, "/home/pi/pics/im%04i.jpg", img_id);
+	sprintf(pfname, "/home/pi/pics/im%04i.jpg", actual_pic);
 
+	req_img = 1;
 
 	pfile = fopen(pfname, "rb");
 
-	if(NULL == pfile) {
+	if (NULL == pfile) {
 		printf("could not open %s\n", pfname);
 	}
 
@@ -167,64 +211,54 @@ uint16_t tx_image(uint16_t img_id) {
 	i = 0;
 
 	while (1) {
-		if (dstatus != 3) {
-			while ((c = ssdv_enc_get_packet(&ssdv)) == SSDV_FEED_ME) {
-				r = fread(b, 1, 128, pfile);
-				if (r <= 0) {
-					printf("Premature end of file\n");
-					break;
-				}
-
-				ssdv_enc_feed(&ssdv, b, r);
-			}
-
-			if (c == SSDV_EOI) {
-				printf("ssdv_enc_get_packet said EOI\n");
+		if (need_gps == 1) {
+		pthread_create(&ggps, &attr, get_gps, NULL);
+		need_gps = 0;
+		}
+		while ((c = ssdv_enc_get_packet(&ssdv)) == SSDV_FEED_ME) {
+			r = fread(b, 1, 128, pfile);
+			if (r <= 0) {
+				printf("Premature end of file\n");
 				break;
-			} else if (c != SSDV_OK) {
-				printf("ssdv_enc_get_packet failed: %i\n", c);
-				fclose(pfile);
-				return (0);
 			}
 
-			write(serial, pkt, SSDV_PKT_SIZE);
-			tcdrain(serial);
-			i++;
+			ssdv_enc_feed(&ssdv, b, r);
 		}
-		//if ((i % 3) ==0) tx_gps();
-		switch (dstatus) {
-		case 0:
-			dstatus = 1;
-			pthread_create(&ggps, &attr, get_gps, NULL);
-			break;
-		case 1:
-			break;
-		case 2:
-			dstatus = 3;
-			printf("Start Transmission\n");
-			pthread_create(&dom, &attr, domex_tx, NULL);
-			pthread_create(&rtty, &attr, rtty_tx, NULL);
-			break;
-		case 3:
-			break;
-		case 4:
-			break;
-		case 5:
-			dstatus = 0;
-			break;
-		}
-		printf("DSTATUS = %i\n", dstatus);
 
+		if (c == SSDV_EOI) {
+			printf("ssdv_enc_get_packet said EOI\n");
+			break;
+		} else if (c != SSDV_OK) {
+			printf("ssdv_enc_get_packet failed: %i\n", c);
+			fclose(pfile);
+			return (0);
+		}
+
+		write(serial, pkt, SSDV_PKT_SIZE);
+		tcdrain(serial);
+		i++;
+		//printf("GPS: %i\n", gps_available);
+		if (gps_available == 1) {
+			if (rtty_f == 0 ) rtty_tx();
+			if (dom_f == 0) pthread_create(&dom, &attr, domex_tx, NULL);
+
+		}
+		if ((dom_f == 1) && (rtty_f == 1)) {
+			need_gps = 1;
+			gps_available = 0;
+			dom_f = 0;
+			rtty_f = 0;
+		}
 	}
+
 	printf("Wrote %i packets\n", i);
 	fclose(pfile);
 	return (i);
 }
 
 int main() {
-
-	int pid;
-	char pfname[] = "/home/pi/pics/im0000.jpg";
+	pthread_t camera, ggps;
+	pthread_attr_t attr;
 
 	int img_id = 1;
 
@@ -235,6 +269,9 @@ int main() {
 	adc_init();
 	domex_setup();
 
+	pthread_attr_init(&attr);
+	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+
 	serial = open("/dev/ttyAMA0", O_RDWR | O_NOCTTY | O_NDELAY);
 	tcgetattr(serial, &options);
 	options.c_cflag = B300 | CS8 | CLOCAL | CSTOPB;		//<Set baud rate
@@ -244,23 +281,19 @@ int main() {
 	tcflush(serial, TCIFLUSH);
 	tcsetattr(serial, TCSANOW, &options);
 
-	while (1) {
-		sprintf(pfname, "/home/pi/pics/im%04i.jpg", img_id);
-		printf("File: %s\n", pfname);
-		pid = fork();
-		printf("PID: %i\n", pid);
-		if (pid == 0) {
+	req_img = 1;
+	need_gps = 1;
 
-			execlp("raspistill", "raspistill", "-w", "512", "-h", "288", "-q", "50", "-rot", "180", "-o",
-					pfname, NULL);
-			perror("execlp()");
-		} else {
-			waitpid(pid, 0, 0);
-			tx_image(img_id);
-		//tx_gps();
-		img_id++;
+	pthread_create(&camera, &attr, run_camera, NULL);
+
+	while (1) {
+		while (actual_pic == 0) {
 		}
+		tx_image(img_id);
+		img_id++;
 
 	}
+	//tx_gps();
+	//img_id++;
 
 }
