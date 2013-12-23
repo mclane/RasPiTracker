@@ -27,6 +27,7 @@ struct termios options;
 int serial = -1;
 int count = 1;
 int dstatus = 0, istatus = 0;
+int req_img = 1, img_id = 0, actual_img = 0;
 struct txdata {
 	char str[80];
 	int len;
@@ -44,13 +45,14 @@ void *domex_tx(void) {
 	domex_txchar(13);
 	GPIO_CLR = 1 << 23;	// Disable NTX2b
 	printf("DomEX finished\n");
-	dstatus = 5;
+	dstatus = 0;
 	return NULL;
 }
 
 void *rtty_tx(void) {
 	write(serial, gpsdata.str, gpsdata.len);
 	tcdrain(serial);
+	printf("RTTY finished\n");
 	dstatus = 4;
 	return NULL;
 }
@@ -117,16 +119,21 @@ void *get_gps(void) {
 	} else {
 		errorstatus |= (1 << 1);
 	}
-	tin = get_T(0);
-	tout = get_T(1);
+	do {
+		tin = get_T(0);
+	} while (tin == 999);
+	do {
+		tout = get_T(1);
+	} while(tout == 999);
 	volt = adc_getV(0);
 	volt = 3300 * volt / 489;
 
 	sprintf(txstring,
 			"$$$$$PYSY,%i,%02d:%02d:%02d,%i.%05d,%i.%05d,%d,%d,%i.%02d,%i.%i,%i.%i",
 			count, hour, minute, second, lat_int, lat_dec, lon_int, lon_dec,
-			alt, sats, volt/1000, (volt%1000)/10, tin / 10, tin < 0 ? -tin % 10 : tin % 10,
-			tout / 10, tout < 0 ? -tout % 10 : tout % 10);
+			alt, sats, volt / 1000, (volt % 1000) / 10, tin / 10,
+			tin < 0 ? -tin % 10 : tin % 10, tout / 10,
+			tout < 0 ? -tout % 10 : tout % 10);
 	sprintf(txstring, "%s,%i", txstring, errorstatus);
 	dfile = fopen("/home/pi/data.txt", "a");
 	fprintf(dfile, "%s\n", txstring);
@@ -136,6 +143,39 @@ void *get_gps(void) {
 	printf("%s", gpsdata.str);
 	dstatus = 2;
 	count++;
+	return NULL;
+}
+
+void *run_camera(void) {
+	char still[] =
+			"raspistill -w 512 -h 288 -q 50 -rot 180 -o /home/pi/pics/im0000.jpg";
+	char HDstill[] = "raspistill -rot 180 -o /home/pi/pics/HDimg0000.jpg";
+	char video[] =
+			"raspivid -w 1280 -h 720 -b 8000000 -rot 180 -t 120000 -n -o /home/pi/pics/vid0000.h264";
+	int vid_id = 1, HDimg_id = 1;
+	while (1) {
+		if (req_img == 1) {
+			img_id++;
+			sprintf(still,
+					"raspistill -w 512 -h 288 -q 50 -rot 180 -o /home/pi/pics/im%04i.jpg",
+					img_id);
+			printf("%s starting\n", still);
+			system(still);
+			actual_img = img_id;
+			req_img = 0;
+		}
+		sprintf(HDstill, "raspistill -rot 180 -o /home/pi/pics/HDimg%04i.jpg",
+				HDimg_id);
+		printf("%s starting\n", HDstill);
+		system(HDstill);
+		HDimg_id++;
+		sprintf(video,
+				"raspivid -w 1280 -h 720 -b 8000000 -rot 180 -t 120000 -n -o /home/pi/vids/vid%04i.h264",
+				vid_id);
+		printf("%s starting\n", video);
+		system(video);
+		vid_id++;
+	}
 	return NULL;
 }
 
@@ -151,10 +191,10 @@ uint16_t tx_image(uint16_t img_id) {
 	char pfname[] = "/home/pi/pics/im0000.jpg";
 	sprintf(pfname, "/home/pi/pics/im%04i.jpg", img_id);
 
-
+	req_img = 1;
 	pfile = fopen(pfname, "rb");
 
-	if(NULL == pfile) {
+	if (NULL == pfile) {
 		printf("could not open %s\n", pfname);
 	}
 
@@ -201,16 +241,17 @@ uint16_t tx_image(uint16_t img_id) {
 			break;
 		case 2:
 			dstatus = 3;
-			printf("Start Transmission\n");
-			pthread_create(&dom, &attr, domex_tx, NULL);
+			printf("Start RTTY\n");
 			pthread_create(&rtty, &attr, rtty_tx, NULL);
 			break;
 		case 3:
 			break;
 		case 4:
+			dstatus = 5;
+			printf("Start DomEX\n");
+			pthread_create(&dom, &attr, domex_tx, NULL);
 			break;
 		case 5:
-			dstatus = 0;
 			break;
 		}
 		printf("DSTATUS = %i\n", dstatus);
@@ -223,10 +264,8 @@ uint16_t tx_image(uint16_t img_id) {
 
 int main() {
 
-	int pid;
-	char pfname[] = "/home/pi/pics/im0000.jpg";
-
-	int img_id = 1;
+	pthread_t camera;
+	pthread_attr_t attr;
 
 	startI2Cgps();
 	setupGPS();
@@ -234,6 +273,9 @@ int main() {
 	get_sensor_addr();
 	adc_init();
 	domex_setup();
+
+	pthread_attr_init(&attr);
+	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 
 	serial = open("/dev/ttyAMA0", O_RDWR | O_NOCTTY | O_NDELAY);
 	tcgetattr(serial, &options);
@@ -244,22 +286,14 @@ int main() {
 	tcflush(serial, TCIFLUSH);
 	tcsetattr(serial, TCSANOW, &options);
 
-	while (1) {
-		sprintf(pfname, "/home/pi/pics/im%04i.jpg", img_id);
-		printf("File: %s\n", pfname);
-		pid = fork();
-		printf("PID: %i\n", pid);
-		if (pid == 0) {
+	req_img = 1;
+	pthread_create(&camera, &attr, run_camera, NULL);
 
-			execlp("raspistill", "raspistill", "-w", "512", "-h", "288", "-q", "50", "-rot", "180", "-o",
-					pfname, NULL);
-			perror("execlp()");
-		} else {
-			waitpid(pid, 0, 0);
-			tx_image(img_id);
+	while (1) {
+		while (actual_img == 0)
+			;
+		tx_image(actual_img);
 		//tx_gps();
-		img_id++;
-		}
 
 	}
 
