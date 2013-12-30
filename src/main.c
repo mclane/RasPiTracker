@@ -26,14 +26,15 @@
 struct termios options;
 int serial = -1;
 int count = 1;
-int dstatus = 0, istatus = 0;
 int req_img = 1, img_id = 0, actual_img = 0;
 struct txdata {
 	char str[80];
 	int len;
+	int new;
 } gpsdata;
+pthread_mutex_t gpsacc_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-void *domex_tx(void) {
+void domex_tx(void) {
 	int i;
 	GPIO_SET = 1 << 23;	// Enable NTX2b
 	for (i = 0; i <= 5; i++) {
@@ -44,17 +45,7 @@ void *domex_tx(void) {
 	}
 	domex_txchar(13);
 	GPIO_CLR = 1 << 23;	// Disable NTX2b
-	printf("DomEX finished\n");
-	dstatus = 0;
-	return NULL;
-}
-
-void *rtty_tx(void) {
-	write(serial, gpsdata.str, gpsdata.len);
-	tcdrain(serial);
-	printf("RTTY finished\n");
-	dstatus = 4;
-	return NULL;
+	//printf("DomEX finished\n");
 }
 
 uint16_t gps_CRC16_checksum(char *string) {
@@ -79,7 +70,7 @@ uint16_t gps_CRC16_checksum(char *string) {
 	return crc;
 }
 
-void *get_gps(void) {
+void get_gps(void) {
 	uint8_t lock = 0, sats = 0;				// lock status and # of sats in view
 	uint8_t hour = 0, minute = 0, second = 0;				// time
 	int lat_int = 0, lon_int = 0;							// position
@@ -90,7 +81,6 @@ void *get_gps(void) {
 	uint8_t fm, gpserr;
 	int tin, tout;
 	uint16_t volt;
-	pthread_t dom;
 	FILE *dfile;
 
 	gpserr = 0;
@@ -124,9 +114,11 @@ void *get_gps(void) {
 	} while (tin == 999);
 	do {
 		tout = get_T(1);
-	} while(tout == 999);
+	} while (tout == 999);
 	volt = adc_getV(0);
 	volt = 3300 * volt / 489;
+
+	pthread_mutex_lock(&gpsacc_mutex);
 
 	sprintf(txstring,
 			"$$$$$PYSY,%i,%02d:%02d:%02d,%i.%05d,%i.%05d,%d,%d,%i.%02d,%i.%i,%i.%i",
@@ -140,10 +132,12 @@ void *get_gps(void) {
 	fclose(dfile);
 	sprintf(gpsdata.str, "%s*%04X\n", txstring, gps_CRC16_checksum(txstring));
 	gpsdata.len = strlen(gpsdata.str);
+	gpsdata.new = 1;
 	printf("%s", gpsdata.str);
-	dstatus = 2;
+
+	pthread_mutex_unlock(&gpsacc_mutex);
+
 	count++;
-	return NULL;
 }
 
 void *run_camera(void) {
@@ -159,55 +153,51 @@ void *run_camera(void) {
 			sprintf(still,
 					"raspistill -w 512 -h 288 -q 50 -rot 180 -o /home/pi/pics/im%04i.jpg",
 					img_id);
-			printf("%s starting\n", still);
+			printf("Still im%04i.jpg started\n", img_id);
 			system(still);
 			actual_img = img_id;
 			req_img = 0;
 		}
 		sprintf(HDstill, "raspistill -rot 180 -o /home/pi/pics/HDimg%04i.jpg",
 				HDimg_id);
-		printf("%s starting\n", HDstill);
+		printf("HD still HDimg%04i.jpg started\n", HDimg_id);
 		system(HDstill);
 		HDimg_id++;
 		sprintf(video,
 				"raspivid -w 1280 -h 720 -b 8000000 -rot 180 -t 120000 -n -o /home/pi/vids/vid%04i.h264",
 				vid_id);
-		printf("%s starting\n", video);
+		printf("Video vid%04i.h264 started\n", vid_id);
 		system(video);
 		vid_id++;
 	}
 	return NULL;
 }
 
-uint16_t tx_image(uint16_t img_id) {
+void *tx_image(void) {
 	int c, i;
 	ssdv_t ssdv;
 	uint8_t pkt[SSDV_PKT_SIZE], b[128];
 	size_t r;
-	pthread_t dom, rtty, ggps;
-	pthread_attr_t attr;
 	FILE *pfile;
 
-	char pfname[] = "/home/pi/pics/im0000.jpg";
-	sprintf(pfname, "/home/pi/pics/im%04i.jpg", img_id);
-
-	req_img = 1;
-	pfile = fopen(pfname, "rb");
-
-	if (NULL == pfile) {
-		printf("could not open %s\n", pfname);
-	}
-
-	pthread_attr_init(&attr);
-	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-
-	ssdv_enc_init(&ssdv, "PYSY", img_id);
-	ssdv_enc_set_buffer(&ssdv, pkt);
-
-	i = 0;
-
 	while (1) {
-		if (dstatus != 3) {
+
+		char pfname[] = "/home/pi/pics/im0000.jpg";
+		sprintf(pfname, "/home/pi/pics/im%04i.jpg", img_id);
+
+		req_img = 1;
+		pfile = fopen(pfname, "rb");
+
+		if (NULL == pfile) {
+			printf("could not open %s\n", pfname);
+		}
+
+		ssdv_enc_init(&ssdv, "PYSY", actual_img);
+		ssdv_enc_set_buffer(&ssdv, pkt);
+
+		i = 0;
+
+		while (1) {
 			while ((c = ssdv_enc_get_packet(&ssdv)) == SSDV_FEED_ME) {
 				r = fread(b, 1, 128, pfile);
 				if (r <= 0) {
@@ -230,41 +220,25 @@ uint16_t tx_image(uint16_t img_id) {
 			write(serial, pkt, SSDV_PKT_SIZE);
 			tcdrain(serial);
 			i++;
-		}
-		//if ((i % 3) ==0) tx_gps();
-		switch (dstatus) {
-		case 0:
-			dstatus = 1;
-			pthread_create(&ggps, &attr, get_gps, NULL);
-			break;
-		case 1:
-			break;
-		case 2:
-			dstatus = 3;
-			printf("Start RTTY\n");
-			pthread_create(&rtty, &attr, rtty_tx, NULL);
-			break;
-		case 3:
-			break;
-		case 4:
-			dstatus = 5;
-			printf("Start DomEX\n");
-			pthread_create(&dom, &attr, domex_tx, NULL);
-			break;
-		case 5:
-			break;
-		}
-		printf("DSTATUS = %i\n", dstatus);
 
+			pthread_mutex_lock(&gpsacc_mutex);
+			if (gpsdata.new == 1) {
+				write(serial, gpsdata.str, gpsdata.len);
+				tcdrain(serial);
+				//printf("RTTY finished\n");
+				gpsdata.new = 0;
+			}
+			pthread_mutex_unlock(&gpsacc_mutex);
+		}
+		printf("Wrote %i packets\n", i);
+		fclose(pfile);
 	}
-	printf("Wrote %i packets\n", i);
-	fclose(pfile);
-	return (i);
+	return NULL;
 }
 
 int main() {
 
-	pthread_t camera;
+	pthread_t camera, image;
 	pthread_attr_t attr;
 
 	startI2Cgps();
@@ -287,14 +261,17 @@ int main() {
 	tcsetattr(serial, TCSANOW, &options);
 
 	req_img = 1;
+	gpsdata.new = 0;
+
+	get_gps();
 	pthread_create(&camera, &attr, run_camera, NULL);
+	while (actual_img == 0)
+		;
+	pthread_create(&image, &attr, tx_image, NULL);
 
 	while (1) {
-		while (actual_img == 0)
-			;
-		tx_image(actual_img);
-		//tx_gps();
-
+		get_gps();
+		domex_tx();
+		sleep(10);
 	}
-
 }
