@@ -21,6 +21,8 @@
 #include "gpio.h"
 #include <sys/wait.h>
 #include "adxl345.h"
+#include "bmp085.h"
+#include "hmc5883.h"
 
 //struct bcm2835_i2cbb ibb, adxl;
 struct termios options;
@@ -128,7 +130,7 @@ void get_gps(void) {
 			tout < 0 ? -tout % 10 : tout % 10);
 	sprintf(txstring, "%s,%i", txstring, errorstatus);
 	dfile = fopen("/home/pi/data.txt", "a");
-	fprintf(dfile, "%s\n", txstring);
+	fprintf(dfile, "%s", txstring);
 	fclose(dfile);
 	sprintf(gpsdata.str, "%s*%04X\n", txstring, gps_CRC16_checksum(txstring));
 	gpsdata.len = strlen(gpsdata.str);
@@ -140,10 +142,24 @@ void get_gps(void) {
 	count++;
 }
 
+void get_sensordata(void) {
+	FILE *dfile;
+	int16_t ax = 0, ay = 0, az = 0, mx = 0, my = 0, mz = 0;
+	int32_t p = 0, t = 0;
+
+	adxl345_xyz(&ax, &ay, &az);
+	bmp085_get(&p, &t);
+	hmc5883_xyz(&mx, &my, &mz);
+	dfile = fopen("/home/pi/data.txt", "a");
+	fprintf(dfile, ",%i,%i,%i,%i,%i,%i,%i.%i,%i.%i\n", ax, ay, az, mx, my, mz, p/100, p%100, t/10, t < 0 ? -t%10 : t%10);
+	fclose(dfile);
+	printf("ax = %i ay = %i az = %i\nmx= %i my = %i mz = %i\np = %i.%i t = %i.%i\n", ax, ay, az, mx, my, mz, p/100, p%100, t/10, t < 0 ? -t%10 : t%10);
+};
+
 void *run_camera(void) {
 	char still[] =
 			"raspistill -w 512 -h 288 -q 50 -rot 180 -o /home/pi/pics/im0000.jpg";
-	char HDstill[] = "raspistill -rot 180 -o /home/pi/pics/HDimg0000.jpg";
+	char HDstill[] = "raspistill -rot 180 -o /home/pi/pics/HD0000.jpg";
 	char video[] =
 			"raspivid -w 1280 -h 720 -b 8000000 -rot 180 -t 120000 -n -o /home/pi/pics/vid0000.h264";
 	int vid_id = 1, HDimg_id = 1;
@@ -158,9 +174,9 @@ void *run_camera(void) {
 			actual_img = img_id;
 			req_img = 0;
 		}
-		sprintf(HDstill, "raspistill -rot 180 -o /home/pi/pics/HDimg%04i.jpg",
+		sprintf(HDstill, "raspistill -rot 180 -o /home/pi/pics/HD%04i.jpg",
 				HDimg_id);
-		printf("HD still HDimg%04i.jpg started\n", HDimg_id);
+		printf("HD still HD%04i.jpg started\n", HDimg_id);
 		system(HDstill);
 		HDimg_id++;
 		sprintf(video,
@@ -248,6 +264,10 @@ int main() {
 	adc_init();
 	domex_setup();
 
+	setupADXL();
+	setupBMP085();
+	setupHMC();
+
 	pthread_attr_init(&attr);
 	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 
@@ -272,6 +292,7 @@ int main() {
 	while (1) {
 		get_gps();
 		domex_tx();
+		get_sensordata();
 		sleep(10);
 	}
 }
