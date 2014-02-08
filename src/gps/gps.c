@@ -50,8 +50,9 @@ void setupGPS() {
 	setGPS_NMEAoff();
 	delay(500);
 	// switch on high altitude option
-	setGPS_DynamicModel6();
-	printf("DM6 on\n");
+	setGPS_DynamicModel3();
+	setGPS_MaxPerformanceMode();
+	printf("DM3 on\n");
 	delay(500);
 }
 

@@ -23,6 +23,12 @@
 #include "adxl345.h"
 #include "bmp085.h"
 #include "hmc5883.h"
+#include "rs6.h"
+
+#define PAYLOAD 49
+#define PARITY 16
+#define HEAD 5
+#define PCKT 255
 
 //struct bcm2835_i2cbb ibb, adxl;
 struct termios options;
@@ -31,6 +37,7 @@ int count = 1;
 int req_img = 1, img_id = 0, actual_img = 0;
 struct txdata {
 	char str[80];
+	char strec[PAYLOAD+PARITY+HEAD+1];
 	int len;
 	int new;
 } gpsdata;
@@ -79,11 +86,14 @@ void get_gps(void) {
 	int32_t alt = 0;										// altitude
 	int32_t lat_dec = 0, lon_dec = 0;
 	uint8_t errorstatus = 0;								// error flags
-	char txstring[80];										// transmit string
+	char txstring[85];										// transmit string
 	uint8_t fm, gpserr;
 	int tin, tout;
 	uint16_t volt;
 	FILE *dfile;
+	int i;
+	uint8_t parity[PARITY];
+	uint8_t data[PAYLOAD];
 
 	gpserr = 0;
 	//do {
@@ -119,7 +129,7 @@ void get_gps(void) {
 	} while (tout == 999);
 	volt = adc_getV(0);
 	volt = 3300 * volt / 489;
-
+	// Begin protected section
 	pthread_mutex_lock(&gpsacc_mutex);
 
 	sprintf(txstring,
@@ -137,6 +147,26 @@ void get_gps(void) {
 	gpsdata.new = 1;
 	printf("%s", gpsdata.str);
 
+	sprintf(txstring,
+			"PYSY%04i%02i%02i%02i%02i%05i%03i%05i%05i%02i%03i%04i%04i%02i",
+			count, hour, minute, second, lat_int, lat_dec, lon_int, lon_dec,
+			alt, sats, volt / 10, tin, tout, errorstatus);
+	for(i=0; i<PAYLOAD; i++) data[i] = (uint8_t) txstring[i];
+	encode_rs_6(&data[0], &parity[0], PCKT-PARITY-PAYLOAD);
+	for(i=0; i<PARITY; i++) txstring[PAYLOAD+i] = (char) parity[i];
+	txstring[PAYLOAD+PARITY+1] = '\0';
+	sprintf(gpsdata.strec, "&&&&&%s", txstring);
+	for(i=0; i<PAYLOAD; i++) printf("%c", txstring[i]);
+	for(i=PAYLOAD; i<(PAYLOAD+PARITY); i++) printf(" %02X", txstring[i]);
+	printf("\n");
+
+	/*
+	 pad = 223 - gpsdata.len;
+	 encode_rs_8(&gpsdata.str[0], &gpsdata.parity[0], pad);
+	 for (i = 0; i < 32; i++) printf("%02X", gpsdata.parity[i]);
+	 printf("\n");
+	 */
+	// End protected section
 	pthread_mutex_unlock(&gpsacc_mutex);
 
 	count++;
@@ -151,10 +181,15 @@ void get_sensordata(void) {
 	bmp085_get(&p, &t);
 	hmc5883_xyz(&mx, &my, &mz);
 	dfile = fopen("/home/pi/data.txt", "a");
-	fprintf(dfile, ",%i,%i,%i,%i,%i,%i,%i.%i,%i.%i\n", ax, ay, az, mx, my, mz, p/100, p%100, t/10, t < 0 ? -t%10 : t%10);
+	fprintf(dfile, ",%i,%i,%i,%i,%i,%i,%i.%i,%i.%i\n", ax, ay, az, mx, my, mz,
+			p / 100, p % 100, t / 10, t < 0 ? -t % 10 : t % 10);
 	fclose(dfile);
-	printf("ax = %i ay = %i az = %i\nmx= %i my = %i mz = %i\np = %i.%i t = %i.%i\n", ax, ay, az, mx, my, mz, p/100, p%100, t/10, t < 0 ? -t%10 : t%10);
-};
+	printf(
+			"ax = %i ay = %i az = %i\nmx= %i my = %i mz = %i\np = %i.%i t = %i.%i\n",
+			ax, ay, az, mx, my, mz, p / 100, p % 100, t / 10,
+			t < 0 ? -t % 10 : t % 10);
+}
+;
 
 void *run_camera(void) {
 	char still[] =
@@ -195,6 +230,7 @@ void *tx_image(void) {
 	uint8_t pkt[SSDV_PKT_SIZE], b[128];
 	size_t r;
 	FILE *pfile;
+	char d;
 
 	while (1) {
 
@@ -240,6 +276,9 @@ void *tx_image(void) {
 			pthread_mutex_lock(&gpsacc_mutex);
 			if (gpsdata.new == 1) {
 				write(serial, gpsdata.str, gpsdata.len);
+				write(serial, gpsdata.strec, PAYLOAD+PARITY+HEAD);
+				write(serial, "\0xff", 1);
+				write(serial, "\0x00", 1);
 				tcdrain(serial);
 				//printf("RTTY finished\n");
 				gpsdata.new = 0;
