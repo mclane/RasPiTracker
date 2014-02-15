@@ -5,7 +5,7 @@ This is the SW for my raspberry pi model a based high-altitude balloon tracker.
 
 It operates the following sensors on i2c:
 
-- ublox i2c gps
+- ublox max7q gps
 - bmp085 barometric sensor
 - adxl345 accelerometer
 - hmc5883 magnetometer
