@@ -193,29 +193,29 @@ void get_sensordata(void) {
 
 void *run_camera(void) {
 	char still[] =
-			"raspistill -w 512 -h 288 -q 50 -rot 180 -o /home/pi/pics/im0000.jpg";
-	char HDstill[] = "raspistill -rot 180 -o /home/pi/pics/HD0000.jpg";
+			"raspistill -w 512 -h 288 -q 50 -rot 180 -ex auto -o /home/pi/pics/im0000.jpg";
+	char HDstill[] = "raspistill -rot 180 -ex auto -o /home/pi/pics/HD0000.jpg";
 	char video[] =
-			"raspivid -w 1280 -h 720 -b 8000000 -rot 180 -t 120000 -n -o /home/pi/pics/vid0000.h264";
+			"raspivid -w 1280 -h 720 -b 8000000 -rot 180 -ex auto -t 120000 -n -o /home/pi/pics/vid0000.h264";
 	int vid_id = 1, HDimg_id = 1;
 	while (1) {
 		if (req_img == 1) {
 			img_id++;
 			sprintf(still,
-					"raspistill -w 512 -h 288 -q 50 -rot 180 -o /home/pi/pics/im%04i.jpg",
+					"raspistill -w 512 -h 288 -q 50 -rot 180 -ex auto -o /home/pi/pics/im%04i.jpg",
 					img_id);
 			printf("Still im%04i.jpg started\n", img_id);
 			system(still);
 			actual_img = img_id;
 			req_img = 0;
 		}
-		sprintf(HDstill, "raspistill -rot 180 -o /home/pi/pics/HD%04i.jpg",
+		sprintf(HDstill, "raspistill -rot 180 -ex auto -o /home/pi/pics/HD%04i.jpg",
 				HDimg_id);
 		printf("HD still HD%04i.jpg started\n", HDimg_id);
 		system(HDstill);
 		HDimg_id++;
 		sprintf(video,
-				"raspivid -w 1280 -h 720 -b 8000000 -rot 180 -t 120000 -n -o /home/pi/vids/vid%04i.h264",
+				"raspivid -w 1280 -h 720 -b 8000000 -rot 180 -ex auto -t 120000 -n -o /home/pi/vids/vid%04i.h264",
 				vid_id);
 		printf("Video vid%04i.h264 started\n", vid_id);
 		system(video);
