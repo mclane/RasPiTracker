@@ -24,7 +24,7 @@ On the PWM output:
 
 The picam is used to collect hi resolution images on the sd card as well as video snippets of 2 min length. Low resolution images are transmitted via ssdv. ssdv functions are from https://github.com/fsphil/ssdv
 
-The i2c SW driver comes from here: http://www.byvac.com//downloads/Pi/bcm2835_i2cbb.zip and is needed since the pi hardware does not support clock stretching which is required for the gps chip
+The i2c SW driver comes from here: http://www.byvac.com//downloads/Pi/bcm2835_i2cbb.zip and is needed since the pi hardware does not support clock stretching which is required for the gps chip.
 
 
 
