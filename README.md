@@ -22,7 +22,11 @@ On the UART:
 On the PWM output:
 - one NTX2B for DominoEX16 (driver adapted from https://github.com/m1ari/Sandals/blob/master/tests/dom16.c)
 
-The picam is used to collect hi resolution images on the sd card as well as video snippets of 2 min length. Low resolution images are transmitted via ssdv. ssdv algorithms are from https://github.com/fsphil/ssdv
+The picam is used to collect hi resolution images on the sd card as well as video snippets of 2 min length. Low resolution images are transmitted via ssdv. ssdv functions are from https://github.com/fsphil/ssdv
+
+The i2c SW driver comes from here: http://www.byvac.com//downloads/Pi/bcm2835_i2cbb.zip and is needed since the pi hardware does not support clock stretching.
+
+
 
 
 
